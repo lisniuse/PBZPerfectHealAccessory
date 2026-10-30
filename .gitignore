@@ -1,0 +1,28 @@
+# Build output
+dist/
+build/
+*.zip
+*.7z
+*.rar
+
+# Logs and local test output
+*.log
+UE4SS.log
+ue4ss/
+
+# Pak build artifacts (source docs are kept)
+*.pak
+*.ucas
+*.utoc
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+
+# Python
+__pycache__/
+*.pyc
