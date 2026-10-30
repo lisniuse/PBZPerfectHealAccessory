@@ -53,11 +53,16 @@ return {
     enabled = true,             -- master switch
     heal_percent = 10,          -- percent of maximum HP (10 = 10%)
     cooldown_seconds = 0.3,     -- minimum seconds between heals
+    boss_only = false,          -- only heal on perfect deflect/dodge vs a boss
     require_carrier = false,    -- require a specific accessory
     carrier_item_id = "",       -- accessory item ID, e.g. AC_ModKraken
     debug = true,               -- write detailed log lines
 }
 ```
+
+`boss_only` uses the attacker's `Difficulty Tag` from its `Actor Config` asset
+(MiniBoss / NormalBoss / GreatBoss / UltimateBoss). If the attacker cannot be
+identified for a given event, the heal is allowed and the log says so.
 
 Changes apply within about 3 seconds even while the game is running. The log shows:
 

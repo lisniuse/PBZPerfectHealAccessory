@@ -1,6 +1,6 @@
 --[[
   PBZ Perfect Heal Accessory
-  Restores 10% of the player's maximum HP whenever the player lands a
+  Restores a percentage of the player's maximum HP whenever the player lands a
   perfect deflect or a perfect dodge.
 
   How it works:
@@ -42,6 +42,7 @@ local player = nil
 local hooksDone = false
 local namedScanTries = 0
 local seenTags = {}
+local lastAttacker, lastAttackerAt = nil, -100
 
 local function valid(o)
     if o == nil or type(o) ~= "userdata" or o.IsValid == nil then return false end
@@ -68,6 +69,25 @@ local function getAttributes()
     if not valid(p) then return nil end
     local ok, attrs = pcall(function() return p:GetPropertyValue("AttributeSetBase") end)
     if ok and valid(attrs) then return attrs end
+    return nil
+end
+
+-- Boss check: reads the character's Actor Config asset and its Difficulty Tag
+-- (CharacterType.Difficulty.*Boss*). Returns true/false, or nil if unknown.
+local function isBossActor(actor)
+    if not valid(actor) then return nil end
+    local okc, asset = pcall(function() return actor:GetPropertyValue("Actor Config") end)
+    if okc and valid(asset) then
+        local okt, tag = pcall(function() return asset["Difficulty Tag"].TagName:ToString() end)
+        if okt and type(tag) == "string" and tag ~= "None" and tag ~= "" then
+            return string.find(string.lower(tag), "boss", 1, true) ~= nil
+        end
+    end
+    -- Fallback: boss blueprints are usually named ...Boss...
+    local okk, cls = pcall(function() return actor:GetClass():GetFullName() end)
+    if okk and type(cls) == "string" then
+        return string.find(string.lower(cls), "boss", 1, true) ~= nil
+    end
     return nil
 end
 
@@ -99,9 +119,19 @@ local function carrierOk()
     return found
 end
 
-local function heal(reason)
+local function heal(reason, attacker)
     if not cfg or not cfg.enabled then return end
     if not carrierOk() then return end
+
+    if cfg.boss_only then
+        local boss = isBossActor(attacker)
+        if boss == false then
+            log("heal skipped (%s): attacker is not a boss", reason)
+            return
+        elseif boss == nil then
+            log("heal (%s): attacker unknown, boss_only allowed", reason)
+        end
+    end
 
     local now = os.clock()
     local cooldown = tonumber(cfg.cooldown_seconds) or 0.3
@@ -158,25 +188,44 @@ local function tagText(tag)
     return text
 end
 
-local function checkResultTag(tag)
-    if tag == nil then return end
-    local text = tagText(tag)
-    if not seenTags[text] and #seenTags < 30 then
-        seenTags[text] = true
-        log("result tag: %s", text)
-    end
+-- Returns "deflect", "dodge" or nil from a result tag text.
+local function resultKind(text)
+    if not text then return nil end
     local lower = string.lower(text)
     local hasPerfect = string.find(lower, "perfect", 1, true) ~= nil
-    local hasDeflect = string.find(lower, "deflect", 1, true) ~= nil
-    local hasDodge = string.find(lower, "dodge", 1, true) ~= nil
-    -- The game reports e.g. "Deflect.Result.Perfect"; the dodge side may be
-    -- "Dodge.Result.Perfect".
-    if hasPerfect and hasDeflect then
-        heal("perfect deflect (tag)")
+    if not hasPerfect then return nil end
+    if string.find(lower, "deflect", 1, true) then return "deflect" end
+    if string.find(lower, "dodge", 1, true) then return "dodge" end
+    return nil
+end
+
+-- Derive the attacking actor from a FDeflectReceiveFrame (used for dodge).
+local function attackerFromFrameData(frameData)
+    local fd = frameData
+    pcall(function() fd = frameData:get() end)
+    if fd == nil then return nil end
+    local action = nil
+    pcall(function()
+        local w = fd.SourceAction
+        action = w
+        pcall(function() action = w:get() end)
+    end)
+    if not valid(action) then return nil end
+
+    local avatar = nil
+    pcall(function() avatar = action:GetAvatarActor() end)
+    if valid(avatar) then return avatar end
+
+    local cur = action
+    for _ = 1, 6 do
+        if not valid(cur) then break end
+        local okc, asset = pcall(function() return cur:GetPropertyValue("Actor Config") end)
+        if okc and valid(asset) then return cur end
+        local oko, outer = pcall(function() return cur:GetOuter() end)
+        if not oko or not valid(outer) then break end
+        cur = outer
     end
-    if hasPerfect and hasDodge then
-        heal("perfect dodge (tag)")
-    end
+    return nil
 end
 
 -- 1) Timed parry (parry cue): EParryResult.Perfect = 3
@@ -186,11 +235,13 @@ local function installParryHooks()
             function(self, attacker, defender, result, impactTime)
                 local okR, r = pcall(function() return result:get() end)
                 if okR and r == 3 then
-                    local d = nil
+                    local d, a = nil, nil
                     pcall(function() d = defender:get() end)
+                    pcall(function() a = attacker:get() end)
                     local p = getPlayer()
                     if valid(d) and valid(p) and d:GetAddress() == p:GetAddress() then
-                        heal("perfect parry")
+                        if valid(a) then lastAttacker = a; lastAttackerAt = os.clock() end
+                        heal("perfect parry", a)
                     end
                 end
             end)
@@ -201,7 +252,11 @@ local function installParryHooks()
         RegisterHook("/Script/ProjectPBZ.LGAAction_CheckParry:NotifyParrayImpact",
             function(self, attacker, defender, result)
                 local okR, r = pcall(function() return result:get() end)
-                if okR and r == 3 then heal("perfect parry impact") end
+                if okR and r == 3 then
+                    local a = nil
+                    pcall(function() a = attacker:get() end)
+                    heal("perfect parry impact", a)
+                end
             end)
     end)
 end
@@ -215,9 +270,13 @@ local function installDodgeHooks()
             local okName, full = pcall(function() return obj:GetFullName() end)
             if okName and full and string.find(full, ":Do Perfect Dodge", 1, true) then
                 local okHook = pcall(function()
-                    RegisterHook(full, function()
+                    RegisterHook(full, function(self, handle, frameData)
+                        local attacker = attackerFromFrameData(frameData)
+                        if not valid(attacker) and lastAttacker ~= nil and (os.clock() - lastAttackerAt) < 1.5 then
+                            attacker = lastAttacker
+                        end
                         log("Do Perfect Dodge fired: %s", full)
-                        heal("perfect dodge")
+                        heal("perfect dodge", attacker)
                     end)
                 end)
                 if okHook then
@@ -230,21 +289,45 @@ local function installDodgeHooks()
     return installed
 end
 
--- 3) Fallback: DeflectComponent result query (local player component only)
+-- 3) Fallback: DeflectComponent result query (local player component only).
+--    Pre: log tags. Post: OutResultData has SourceAvatar, so the boss filter
+--    can see the attacker.
 local function installResultHook()
+    local function isLocalComponent(self)
+        local comp = nil
+        pcall(function() comp = self:get() end)
+        local p = getPlayer()
+        if not (valid(comp) and valid(p)) then return true end
+        local okOwner, owner = pcall(function() return comp:GetOwner() end)
+        if not okOwner or not valid(owner) then return true end
+        return owner:GetAddress() == p:GetAddress()
+    end
+
     pcall(function()
         RegisterHook("/Script/PBZDeflectSystem.DeflectComponent:GetSelfResultData",
             function(self, handle, resultTag, outData)
-                local comp = nil
-                pcall(function() comp = self:get() end)
-                local p = getPlayer()
-                if valid(comp) and valid(p) then
-                    local okOwner, owner = pcall(function() return comp:GetOwner() end)
-                    if not okOwner or not valid(owner) or owner:GetAddress() ~= p:GetAddress() then
-                        return
-                    end
+                if not isLocalComponent(self) then return end
+                local text = tagText(resultTag)
+                if not seenTags[text] and #seenTags < 30 then
+                    seenTags[text] = true
+                    log("result tag: %s", text)
                 end
-                checkResultTag(resultTag)
+            end,
+            function(self, handle, resultTag, outData)
+                if not isLocalComponent(self) then return end
+                local kind = resultKind(tagText(resultTag))
+                if not kind then return end
+
+                local src = nil
+                pcall(function() src = outData:get().SourceAvatar end)
+                if not valid(src) then pcall(function() src = outData.SourceAvatar end) end
+                if valid(src) then lastAttacker = src; lastAttackerAt = os.clock() end
+
+                if kind == "deflect" then
+                    heal("perfect deflect (tag)", src)
+                else
+                    heal("perfect dodge (tag)", src)
+                end
             end)
     end)
 end
@@ -289,18 +372,19 @@ LoopAsync(3000, function()
     local before = cfg and cfg.heal_percent
     loadConfig()
     if cfg and cfg.heal_percent ~= before then
-        log("config reloaded: heal=%s%% cooldown=%ss", tostring(cfg.heal_percent), tostring(cfg.cooldown_seconds))
+        log("config reloaded: heal=%s%% cooldown=%ss boss_only=%s",
+            tostring(cfg.heal_percent), tostring(cfg.cooldown_seconds), tostring(cfg.boss_only))
     end
     return false
 end)
 
 -- Startup
 if loadConfig() then
-    log("config loaded: heal=%s%% cooldown=%ss carrier=%s",
-        tostring(cfg.heal_percent), tostring(cfg.cooldown_seconds), tostring(cfg.carrier_item_id))
+    log("config loaded: heal=%s%% cooldown=%ss boss_only=%s carrier=%s",
+        tostring(cfg.heal_percent), tostring(cfg.cooldown_seconds), tostring(cfg.boss_only), tostring(cfg.carrier_item_id))
 else
     log("config.lua not found; using defaults")
-    cfg = { enabled = true, heal_percent = 10, cooldown_seconds = 0.3, require_carrier = false, carrier_item_id = "", debug = true }
+    cfg = { enabled = true, heal_percent = 10, cooldown_seconds = 0.3, boss_only = false, require_carrier = false, carrier_item_id = "", debug = true }
 end
 ExecuteInGameThreadWithDelay(500, tick)
 
@@ -308,9 +392,10 @@ RegisterConsoleCommandHandler("perfectheal", function(_, params)
     local a = params and params[1] and tostring(params[1]):lower() or "status"
     if a == "on" then cfg.enabled = true
     elseif a == "off" then cfg.enabled = false
-    elseif a == "test" then heal("manual test") end
-    log("enabled=%s percent=%s cooldown=%s carrier=%s",
-        tostring(cfg.enabled), tostring(cfg.heal_percent), tostring(cfg.cooldown_seconds), tostring(cfg.carrier_item_id))
+    elseif a == "test" then heal("manual test", nil) end
+    log("enabled=%s percent=%s cooldown=%s boss_only=%s carrier=%s",
+        tostring(cfg.enabled), tostring(cfg.heal_percent), tostring(cfg.cooldown_seconds),
+        tostring(cfg.boss_only), tostring(cfg.carrier_item_id))
     return true
 end)
 
