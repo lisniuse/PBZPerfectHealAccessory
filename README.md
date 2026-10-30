@@ -129,3 +129,7 @@ PBZ\platform\steam\ue4ss\UE4SS.log
 
 - Game updates can rename the hooked UFunctions; if healing stops after an update, the hook paths need updating.
 - No network access, no save writes beyond the current health value.
+
+## Source
+
+https://github.com/lisniuse/PBZPerfectHealAccessory
