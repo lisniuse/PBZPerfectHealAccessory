@@ -43,11 +43,44 @@ local hooksDone = false
 local namedScanTries = 0
 local seenTags = {}
 local lastAttacker, lastAttackerAt = nil, -100
+local cheatMgr, F_SetHealth
+local F_HealthPostFunc, F_HealthPost
 
 local function valid(o)
     if o == nil or type(o) ~= "userdata" or o.IsValid == nil then return false end
     local ok, v = pcall(function() return o:IsValid() end)
     return ok and v
+end
+
+local function find_child(cls, target)
+    if not valid(cls) then return nil end
+    local child
+    pcall(function() child = cls.Children end)
+    local guard = 0
+    while valid(child) and guard < 5000 do
+        guard = guard + 1
+        local n, t
+        pcall(function() n = child:GetFName():ToString(); t = child:type() end)
+        if n == target and t == "UFunction" then return child end
+        local nxt
+        pcall(function() nxt = child.Next end)
+        child = nxt
+    end
+    return nil
+end
+
+local function find_function_deep(obj, target, depth_max)
+    local c, d = obj, 0
+    while valid(c) and d < (depth_max or 10) do
+        local cls
+        pcall(function() cls = c:GetClass() end)
+        local f = find_child(cls, target)
+        if f then return f end
+        local sup
+        pcall(function() sup = c.SuperStruct end)
+        c = sup; d = d + 1
+    end
+    return nil
 end
 
 local function getPlayer()
@@ -119,6 +152,52 @@ local function carrierOk()
     return found
 end
 
+-- Resolve the game's own cheat manager and its GM_SetHealth function. The
+-- cheat manager writes health through the game's attribute path, which sticks
+-- where a raw struct write may be overwritten by GAS.
+local function resolveCheat()
+    if valid(cheatMgr) and valid(F_SetHealth) then return end
+    local ok, pc = pcall(function() return FindFirstOf("PlayerController") end)
+    if ok and valid(pc) then
+        local okc, cm = pcall(function() return pc.CheatManager end)
+        if okc and valid(cm) then cheatMgr = cm end
+    end
+    if not valid(cheatMgr) then
+        local okf, cm = pcall(function() return FindFirstOf("PBZCheatManager") end)
+        if okf and valid(cm) then cheatMgr = cm end
+    end
+    if valid(cheatMgr) then
+        F_SetHealth = find_function_deep(cheatMgr, "GM_SetHealth", 8)
+        if not valid(F_SetHealth) then
+            ForEachUObject(function(obj)
+                if valid(F_SetHealth) then return true end
+                local okc, cls = pcall(function() return obj:GetClass():GetFName():ToString() end)
+                if okc and cls == "Function" then
+                    local okn, full = pcall(function() return obj:GetFullName() end)
+                    if okn and full and string.find(full, ":GM_SetHealth", 1, true) then
+                        F_SetHealth = obj
+                    end
+                end
+            end)
+        end
+    end
+    -- The player blueprint has Health Post Func(NewValue, OldValue), which is
+    -- what refreshes the HUD/material after a health change.
+    local p = getPlayer()
+    if valid(p) then
+        if not valid(F_HealthPostFunc) then
+            F_HealthPostFunc = find_function_deep(p, "Health Post Func", 10)
+        end
+        if not valid(F_HealthPost) then
+            F_HealthPost = find_function_deep(p, "Health Post", 10)
+        end
+    end
+
+    log("cheat resolve: pc=%s cm=%s F=%s healthPostFunc=%s healthPost=%s",
+        tostring(ok), tostring(valid(cheatMgr)), tostring(valid(F_SetHealth)),
+        tostring(valid(F_HealthPostFunc)), tostring(valid(F_HealthPost)))
+end
+
 local function heal(reason, attacker)
     if not cfg or not cfg.enabled then return end
     if not carrierOk() then return end
@@ -152,17 +231,40 @@ local function heal(reason, attacker)
     local newValue = math.min(cur + amount, max)
     if newValue <= cur + 0.5 then return end
 
-    local ok = pcall(function()
-        attrs.Health.CurrentValue = newValue
-        -- Writing CurrentValue alone may not refresh the HUD bar; mirror it
-        -- into BaseValue so the UI follows.
-        attrs.Health.BaseValue = newValue
-    end)
-    if ok then
+    local usedCheat = false
+    resolveCheat()
+    if valid(cheatMgr) and valid(F_SetHealth) then
+        usedCheat = pcall(function() F_SetHealth(cheatMgr, newValue) end)
+    end
+
+    -- Read back and fall back to the direct attribute write if the game's
+    -- setter did not take effect (or is unavailable).
+    local after = nil
+    pcall(function() after = attrs.Health.CurrentValue end)
+    local needFallback = (not usedCheat) or (type(after) == "number" and math.abs(after - newValue) > 1.0)
+    if needFallback then
+        pcall(function()
+            attrs.Health.CurrentValue = newValue
+            -- Writing CurrentValue alone may not refresh the HUD bar; mirror
+            -- it into BaseValue so the UI follows.
+            attrs.Health.BaseValue = newValue
+        end)
+        pcall(function() after = attrs.Health.CurrentValue end)
+    end
+
+    if type(after) == "number" and math.abs(after - cur) > 0.5 then
         lastHeal = now
-        log("heal %.1f -> %.1f (+%.1f, %.1f%%, %s)", cur, newValue, newValue - cur, percent, reason)
+        -- Ask the game to refresh the health HUD.
+        if valid(F_HealthPostFunc) then
+            pcall(function() F_HealthPostFunc(getPlayer(), after, cur) end)
+        elseif valid(F_HealthPost) then
+            pcall(function() F_HealthPost(getPlayer()) end)
+        end
+        log("heal %.1f -> %.1f (+%.1f, %.1f%%, %s) readback=%.1f cheat=%s",
+            cur, newValue, newValue - cur, percent, reason, after, tostring(usedCheat))
     else
-        log("heal write failed (%s)", reason)
+        log("heal did not stick (%s): cur=%.1f new=%.1f readback=%s cheat=%s",
+            reason, cur, newValue, tostring(after), tostring(usedCheat))
     end
 end
 
@@ -387,6 +489,12 @@ else
     cfg = { enabled = true, heal_percent = 10, cooldown_seconds = 0.3, boss_only = false, require_carrier = false, carrier_item_id = "", debug = true }
 end
 ExecuteInGameThreadWithDelay(500, tick)
+
+-- Diagnostics: report whether the cheat manager path is available, without
+-- waiting for a perfect deflect.
+ExecuteInGameThreadWithDelay(5000, function()
+    resolveCheat()
+end)
 
 RegisterConsoleCommandHandler("perfectheal", function(_, params)
     local a = params and params[1] and tostring(params[1]):lower() or "status"

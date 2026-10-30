@@ -26,3 +26,6 @@ desktop.ini
 # Python
 __pycache__/
 *.pyc
+
+# Local build staging
+.build/

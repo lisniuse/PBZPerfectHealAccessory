@@ -89,7 +89,11 @@ perfectheal status | on | off | test
 - **Perfect deflect (parry cue):** hooks `LGAAction_CheckParry:NotifyParrayResultDetermine` and checks for `EParryResult.Perfect` (3).
 - **Perfect dodge:** hooks every blueprint function named `Do Perfect Dodge`.
 - **Fallback:** hooks `DeflectComponent:GetSelfResultData` and checks the result tag (the game reports e.g. `Deflect.Result.Perfect`).
-- **Healing:** writes the player's `AttributeSetBase` health value, capped at maximum HP.
+- **Healing:** prefers the game's own `GM_SetHealth` path and falls back to writing
+  the player's `AttributeSetBase` health value directly, capped at maximum HP.
+  The game's `Health Post Func(NewValue, OldValue)` is then called so the HUD
+  bar, damage vignette and character material update immediately instead of
+  waiting for the next hit.
 
 ## About a real inventory accessory
 
@@ -143,6 +147,24 @@ PBZ\platform\steam\ue4ss\UE4SS.log
 
 - Game updates can rename the hooked UFunctions; if healing stops after an update, the hook paths need updating.
 - No network access, no save writes beyond the current health value.
+
+## Changelog
+
+### 1.2.0
+- **Fixed:** the health bar did not refresh after a heal until the player was hit
+  again. The mod now calls the game's own `Health Post Func(NewValue, OldValue)`
+  right after healing, so the HUD updates on the same frame.
+- Healing now tries the game's cheat-manager setter (`GM_SetHealth`) first and
+  verifies the result by reading the attribute back, falling back to a direct
+  attribute write when the setter is unavailable.
+- Added `readback=` / `cheat=` fields to the heal log line for diagnostics.
+
+### 1.1.0
+- Added one-click `Install.cmd` / `Uninstall.cmd` / `Configure Heal Percent.cmd`.
+- Added `boss_only` option.
+
+### 1.0.0
+- Initial release: heal on perfect deflect / perfect dodge.
 
 ## Source
 
