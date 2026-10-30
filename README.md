@@ -17,13 +17,19 @@ A UE4SS mod for **Phantom Blade Zero**: whenever the player lands a **perfect de
 ## Installation
 
 1. Fully close Phantom Blade Zero.
-2. Install UE4SS for Phantom Blade Zero if you have not already.
-3. Copy the whole `PBZPerfectHealAccessory` folder into:
+2. Install **UE4SS for Phantom Blade Zero** if you have not already.
+
+**Option A (recommended):** double-click `Install.cmd`.
+It finds the game through Steam, checks that UE4SS is installed, and copies
+the mod into `ue4ss\Mods\`. An existing `config.lua` is preserved.
+
+**Option B (manual):** copy the whole `PBZPerfectHealAccessory` folder into:
    ```
    PBZ\platform\steam\ue4ss\Mods\
    ```
-4. Start the game and load a save.
-5. Check `PBZ\platform\steam\ue4ss\UE4SS.log` for:
+
+3. Start the game and load a save.
+4. Check `PBZ\platform\steam\ue4ss\UE4SS.log` for:
    ```
    [PBZPerfectHeal] loaded
    [PBZPerfectHeal] base hooks installed
@@ -101,7 +107,13 @@ PBZPerfectHealAccessory\
 ├── Scripts\main.lua
 ├── Scripts\config.lua
 ├── tools\set-heal.ps1
+├── tools\common.ps1
+├── tools\install.ps1
+├── tools\uninstall.ps1
 ├── Configure Heal Percent.cmd
+├── Install.cmd
+├── Uninstall.cmd
+├── LICENSE
 └── README.md
 ```
 
@@ -115,7 +127,9 @@ Notes:
 
 ## Uninstall
 
-Close the game and delete `PBZ\platform\steam\ue4ss\Mods\PBZPerfectHealAccessory\`. No save restoration is needed.
+Close the game and run `Uninstall.cmd`, or delete
+`PBZ\platform\steam\ue4ss\Mods\PBZPerfectHealAccessory\` manually.
+No save restoration is needed.
 
 ## Log
 
