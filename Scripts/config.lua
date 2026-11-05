@@ -24,5 +24,5 @@ return {
     carrier_item_id = "",
 
     -- Print detailed lines to ue4ss/UE4SS.log.
-    debug = true,
+    debug = false,
 }

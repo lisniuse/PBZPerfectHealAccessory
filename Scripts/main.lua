@@ -578,12 +578,14 @@ ExecuteInGameThreadWithDelay(5000, function()
 end)
 
 -- Manual test without the console: F9 heals once (the console key does not open for everyone).
-pcall(function()
-    RegisterKeyBind(Key.F9, function()
-        heal("manual test (F9)", nil)
+if cfg and cfg.debug then
+    pcall(function()
+        RegisterKeyBind(Key.F9, function()
+            heal("manual test (F9)", nil)
+        end)
+        log("test key F9 bound (heal once)")
     end)
-    log("test key F9 bound (heal once)")
-end)
+end
 
 RegisterConsoleCommandHandler("perfectheal", function(_, params)
     local a = params and params[1] and tostring(params[1]):lower() or "status"

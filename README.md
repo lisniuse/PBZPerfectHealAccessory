@@ -160,6 +160,8 @@ PBZ\platform\steam\ue4ss\UE4SS.log
 - Do **not** apply the game's `HealGameplayEffect_SetByCaller` to force a refresh: it is a
   SetByCaller effect and crashes the game without a spec.
 - Defaults: `heal_percent = 10`, `cooldown_seconds = 0.1`.
+- `debug` ships as `false` (no log lines, no `F9` test key); set `debug = true`
+  in `config.lua` only when troubleshooting.
 - Cheat manager is resolved before the fight (the first heal used to cost ~500 ms).
 - Added an `F9` test key and a `perfectheal` console command (`Ctrl+O`).
 
