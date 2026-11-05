@@ -316,13 +316,6 @@ local function heal(reason, attacker)
         log("%s heal %.1f -> %.1f (+%.1f, %.1f%%, %s) readback=%.1f base=%s cheat=%s took=%.0fms gameHealth=%s gameMax=%s pawn=%s",
             stamp(), cur, newValue, newValue - cur, percent, reason, after, tostring(base), tostring(usedCheat),
             (os.clock() - t0) * 1000, tostring(gh0) .. "->" .. tostring(gh), tostring(gmh), tostring(who))
-        -- the value can be overwritten by the game's own attribute update a moment later: look again
-        ExecuteInGameThreadWithDelay(500, function()
-            local a2 = nil
-            local attrs2 = getAttributes()
-            pcall(function() a2 = attrs2.Health.CurrentValue end)
-            log("%s heal check +0.5s: %s (wanted %.1f)", stamp(), tostring(a2), newValue)
-        end)
     else
         log("%s heal did not stick (%s): cur=%.1f new=%.1f readback=%s cheat=%s",
             stamp(), reason, cur, newValue, tostring(after), tostring(usedCheat))
@@ -392,16 +385,11 @@ local function attackerFromFrameData(frameData)
 end
 
 -- 1) Timed parry (parry cue): EParryResult.Perfect = 3
-local parryLogs = 0
 local function installParryHooks()
     local ok = pcall(function()
         RegisterHook("/Script/ProjectPBZ.LGAAction_CheckParry:NotifyParrayResultDetermine",
             function(self, attacker, defender, result, impactTime)
                 local okR, r = pcall(function() return result:get() end)
-                if okR and parryLogs < 40 then
-                    parryLogs = parryLogs + 1
-                    log("%s parry determine: result=%s", stamp(), tostring(r))
-                end
                 if okR and r == 3 then
                     local d, a = nil, nil
                     pcall(function() d = defender:get() end)
@@ -421,7 +409,6 @@ local function installParryHooks()
         RegisterHook("/Script/ProjectPBZ.LGAAction_CheckParry:NotifyParrayImpact",
             function(self, attacker, defender, result)
                 local okR, r = pcall(function() return result:get() end)
-                if okR then log("%s parry impact: result=%s", stamp(), tostring(r)) end
                 if okR and r == 3 then
                     local a = nil
                     pcall(function() a = attacker:get() end)
@@ -432,17 +419,12 @@ local function installParryHooks()
 end
 
 -- 2) Perfect dodge: every blueprint function named "Do Perfect Dodge"
-local dodgeNamesLogged = false
 local function installDodgeHooks()
     local installed = 0
-    local candidates = {}
     ForEachUObject(function(obj)
         local okCls, cls = pcall(function() return obj:GetClass():GetFName():ToString() end)
         if okCls and cls == "Function" then
             local okName, full = pcall(function() return obj:GetFullName() end)
-            if okName and full and string.find(string.lower(full), "dodge", 1, true) then
-                if #candidates < 80 then candidates[#candidates + 1] = full end
-            end
             if okName and full and string.find(full, ":Do Perfect Dodge", 1, true) then
                 local okHook = pcall(function()
                     RegisterHook(full, function(self, handle, frameData)
@@ -461,10 +443,6 @@ local function installDodgeHooks()
             end
         end
     end)
-    if not dodgeNamesLogged then
-        dodgeNamesLogged = true
-        log("objects whose name mentions dodge (%d): %s", #candidates, table.concat(candidates, " | "))
-    end
     return installed
 end
 
@@ -578,24 +556,4 @@ ExecuteInGameThreadWithDelay(5000, function()
 end)
 
 -- Manual test without the console: F9 heals once (the console key does not open for everyone).
-if cfg and cfg.debug then
-    pcall(function()
-        RegisterKeyBind(Key.F9, function()
-            heal("manual test (F9)", nil)
-        end)
-        log("test key F9 bound (heal once)")
-    end)
-end
-
-RegisterConsoleCommandHandler("perfectheal", function(_, params)
-    local a = params and params[1] and tostring(params[1]):lower() or "status"
-    if a == "on" then cfg.enabled = true
-    elseif a == "off" then cfg.enabled = false
-    elseif a == "test" then heal("manual test", nil) end
-    log("enabled=%s percent=%s cooldown=%s boss_only=%s carrier=%s",
-        tostring(cfg.enabled), tostring(cfg.heal_percent), tostring(cfg.cooldown_seconds),
-        tostring(cfg.boss_only), tostring(cfg.carrier_item_id))
-    return true
-end)
-
 log("loaded")
