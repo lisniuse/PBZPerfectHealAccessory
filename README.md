@@ -150,6 +150,19 @@ PBZ\platform\steam\ue4ss\UE4SS.log
 
 ## Changelog
 
+### 1.3.0
+- **Fixed (for real this time):** the heal was being undone by the next attribute
+  update, because only `CurrentValue` was written. `BaseValue` is written as well now,
+  so the healed value sticks.
+- **Fixed:** the bar did not move on a heal. `Health Post Func` turned out not to be
+  what drives it; the HUD now calls the bar widget's own `OnHeathChanged(NewValue, OldValue)`
+  (`WB_PlayerHPBar_V1_C`), which is the function the game's attribute binding uses.
+- Do **not** apply the game's `HealGameplayEffect_SetByCaller` to force a refresh: it is a
+  SetByCaller effect and crashes the game without a spec.
+- Defaults: `heal_percent = 10`, `cooldown_seconds = 0.1`.
+- Cheat manager is resolved before the fight (the first heal used to cost ~500 ms).
+- Added an `F9` test key and a `perfectheal` console command (`Ctrl+O`).
+
 ### 1.2.0
 - **Fixed:** the health bar did not refresh after a heal until the player was hit
   again. The mod now calls the game's own `Health Post Func(NewValue, OldValue)`

@@ -10,13 +10,13 @@ return {
 
     -- Minimum interval between heals, in seconds. Prevents several hooks
     -- from healing for the same event.
-    cooldown_seconds = 0.3,
+    cooldown_seconds = 0.1,
 
     -- Only heal when the perfect deflect/dodge was against a boss.
     -- Boss = Difficulty Tag containing "Boss" (MiniBoss, NormalBoss,
     -- GreatBoss, UltimateBoss). If the attacker cannot be identified,
     -- the heal is allowed and a log line says so.
-    boss_only = false,
+    boss_only = true,
 
     -- Optional: only heal while the player owns a specific accessory.
     -- Set require_carrier = true and put the item ID in carrier_item_id.
